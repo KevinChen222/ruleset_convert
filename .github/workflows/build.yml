@@ -1,0 +1,81 @@
+name: Convert rule sets
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 20 * * *' # 04:00 Asia/Taipei, every day
+  push:
+    branches: [main]
+    paths:
+      - 'rules/**'
+      - 'sources.json'
+      - 'requirements.txt'
+      - 'scripts/**'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ruleset-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install converter dependency
+        run: python -m pip install -r requirements.txt
+      - name: Convert Mihomo sources
+        run: python scripts/convert.py
+      - name: Check whether there are sources to publish
+        id: ready
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/*.json)
+          if (( ${#files[@]} > 0 )); then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'No sources configured; skipping the release.'
+          fi
+      - name: Download verified sing-box compiler
+        if: steps.ready.outputs.publish == 'true'
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 \
+            --output sing-box.tar.gz \
+            'https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-linux-amd64.tar.gz'
+          echo 'a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6  sing-box.tar.gz' | sha256sum --check
+          tar -xzf sing-box.tar.gz
+          ./sing-box-1.14.2-linux-amd64/sing-box version
+      - name: Compile binary rule sets
+        if: steps.ready.outputs.publish == 'true'
+        shell: bash
+        run: |
+          for source in dist/*.json; do
+            ./sing-box-1.14.2-linux-amd64/sing-box rule-set compile \
+              --output "${source%.json}.srs" "$source"
+          done
+      - name: Publish release assets
+        if: steps.ready.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view ruleset >/dev/null 2>&1; then
+            gh release upload ruleset dist/*.json dist/*.srs --clobber
+            while IFS= read -r old_asset; do
+              if [[ ! -f "dist/$old_asset" ]]; then
+                gh release delete-asset ruleset "$old_asset" --yes
+              fi
+            done < <(gh release view ruleset --json assets --jq '.assets[].name')
+          else
+            gh release create ruleset dist/*.json dist/*.srs \
+              --title 'sing-box rule sets' \
+              --notes 'Automatically converted from the Mihomo sources in this repository.'
+          fi

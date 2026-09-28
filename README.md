@@ -32,7 +32,7 @@
 
 `behavior` 对应 Mihomo `rule-providers` 中的 `classical`、`domain`、`ipcidr`。输入可用逐行纯文本（`.list`、`.txt` 等）或含 `payload` 列表的 `.yaml` / `.yml`；二进制 `.mrs` 不是源文件，不能直接转换。一个源文件生成一对 `<name>.json` 和 `<name>.srs`。
 
-支持的 `classical` 类型：`DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`DOMAIN-REGEX`、`IP-CIDR`、`IP-CIDR6`、`SRC-IP-CIDR`、`SRC-IP-CIDR6`、`PROCESS-NAME`、`PROCESS-PATH`、`DST-PORT`、`SRC-PORT`、`NETWORK`。`domain` 类型支持普通域名、`+.`、`.` 和整段标签 `*`（例如 `*.example.com`）。遇到不能可靠转换的类型、策略字段或 `no-resolve`，构建会报出位置并停止，避免发布不完整规则。
+支持的 `classical` 类型：`DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`DOMAIN-REGEX`、`IP-CIDR`、`IP-CIDR6`、`SRC-IP-CIDR`、`SRC-IP-CIDR6`、`PROCESS-NAME`、`PROCESS-PATH`、`DST-PORT`、`SRC-PORT`、`NETWORK`。`domain` 类型支持普通域名、`+.`、`.` 和整段标签 `*`（例如 `*.example.com`）。`IP-CIDR` 和 `IP-CIDR6` 末尾的 `no-resolve` 会自动去掉，因为 sing-box 规则集不能保存这个 Mihomo 选项；遇到不能可靠转换的类型或策略字段，构建仍会报出位置并停止。
 
 ## 在 sing-box 中使用
 

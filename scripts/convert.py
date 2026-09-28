@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert local Mihomo rule providers into sing-box source rule sets."""
+"""Convert Mihomo rule providers into sing-box source rule sets."""
 
 import argparse
 import ipaddress
@@ -7,6 +7,8 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import urlopen
 
 import yaml
 
@@ -33,18 +35,44 @@ def fail(location, message):
     raise ValueError(f"{location}: {message}")
 
 
-def read_lines(path):
-    if path.suffix.lower() in {".yaml", ".yml"}:
-        data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+def read_lines(source):
+    if isinstance(source, Path):
+        content = source.read_text(encoding="utf-8-sig")
+        suffix = source.suffix.lower()
+    else:
+        try:
+            with urlopen(source, timeout=20) as response:
+                content = response.read().decode("utf-8-sig")
+        except (OSError, UnicodeError) as error:
+            fail(source, f"cannot download UTF-8 rule source: {error}")
+        suffix = Path(urlsplit(source).path).suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        data = yaml.safe_load(content)
         if not isinstance(data, dict) or not isinstance(data.get("payload"), list):
-            fail(path, "YAML must contain a payload list")
+            fail(source, "YAML must contain a payload list")
         for index, value in enumerate(data["payload"], 1):
             if not isinstance(value, str):
-                fail(f"{path}:payload[{index}]", "rule must be a string")
-            yield f"{path}:payload[{index}]", value.strip()
+                fail(f"{source}:payload[{index}]", "rule must be a string")
+            yield f"{source}:payload[{index}]", value.strip()
     else:
-        for number, value in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
-            yield f"{path}:{number}", value.strip()
+        for number, value in enumerate(content.splitlines(), 1):
+            yield f"{source}:{number}", value.strip()
+
+
+def checked_url(url, location):
+    if not isinstance(url, str):
+        fail(location, "url must be a GitHub HTTPS file URL")
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc not in {"github.com", "raw.githubusercontent.com"}:
+        fail(location, "url must be a GitHub HTTPS file URL")
+    parts = parsed.path.strip("/").split("/")
+    if parsed.netloc == "github.com":
+        if len(parts) < 5 or parts[2] not in {"blob", "raw"}:
+            fail(location, "GitHub URL must point to a file under blob/ or raw/")
+        parts[2] = "raw"
+    elif len(parts) < 4:
+        fail(location, "GitHub raw URL must point to a file")
+    return urlunsplit(("https", parsed.netloc, "/" + "/".join(parts), "", ""))
 
 
 def checked_domain(value, location):
@@ -119,30 +147,34 @@ def convert(manifest, output_dir):
     names = set()
     output_dir.mkdir(parents=True, exist_ok=True)
     for source in sources:
-        if not isinstance(source, dict) or set(source) != {"name", "path", "behavior"}:
-            fail(manifest, "each source needs name, path, and behavior")
-        name, path, behavior = source["name"], source["path"], source["behavior"]
+        if not isinstance(source, dict) or set(source) not in ({"name", "path", "behavior"}, {"name", "url", "behavior"}):
+            fail(manifest, "each source needs name, behavior, and either path or url")
+        name, behavior = source["name"], source["behavior"]
         if not isinstance(name, str) or not NAME_RE.fullmatch(name) or name in names:
             fail(manifest, f"invalid or duplicate name {name!r}")
-        if not isinstance(path, str) or not path.startswith("rules/"):
-            fail(manifest, f"path must be inside rules/: {path!r}")
-        source_path = (root / path).resolve()
-        if not source_path.is_relative_to(root / "rules") or not source_path.is_file():
-            fail(manifest, f"missing or unsafe source path {path!r}")
-        if source_path.suffix.lower() == ".mrs":
-            fail(source_path, "binary .mrs files are not supported; use the text or YAML source")
+        if "path" in source:
+            path = source["path"]
+            if not isinstance(path, str) or not path.startswith("rules/"):
+                fail(manifest, f"path must be inside rules/: {path!r}")
+            source_ref = (root / path).resolve()
+            if not source_ref.is_relative_to(root / "rules") or not source_ref.is_file():
+                fail(manifest, f"missing or unsafe source path {path!r}")
+        else:
+            source_ref = checked_url(source["url"], manifest)
+        if Path(urlsplit(str(source_ref)).path).suffix.lower() == ".mrs":
+            fail(source_ref, "binary .mrs files are not supported; use the text or YAML source")
         if behavior not in CONVERTERS:
             fail(manifest, f"unsupported behavior {behavior!r}")
         names.add(name)
         rules = []
-        for location, line in read_lines(source_path):
+        for location, line in read_lines(source_ref):
             if line and not line.startswith("#"):
                 rules.append(CONVERTERS[behavior](line, location))
         if not rules:
-            fail(source_path, "source has no rules")
+            fail(source_ref, "source has no rules")
         target = output_dir / f"{name}.json"
         target.write_text(json.dumps({"version": 2, "rules": rules}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print(f"{source_path} -> {target} ({len(rules)} rules)")
+        print(f"{source_ref} -> {target} ({len(rules)} rules)")
     if not sources:
         print("No sources listed; add files under rules/ and entries in sources.json.")
 

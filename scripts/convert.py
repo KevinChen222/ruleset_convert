@@ -55,8 +55,10 @@ def checked_domain(value, location):
 
 def convert_classical(line, location):
     parts = [part.strip() for part in line.split(",")]
+    if len(parts) == 3 and parts[0].upper() in {"IP-CIDR", "IP-CIDR6"} and parts[2].lower() == "no-resolve":
+        parts.pop()
     if len(parts) != 2 or not all(parts):
-        fail(location, "expected TYPE,value without policy or no-resolve")
+        fail(location, "expected TYPE,value without policy (only IP-CIDR/IP-CIDR6 may add no-resolve)")
     kind, value = parts
     field = RULE_FIELDS.get(kind.upper())
     if field is None:

@@ -1,6 +1,6 @@
 {
   "sources": [
-    {"name": "emby", "url": "https://cfgit.kevinchen.vip/KevinChen222/config/refs/heads/main/emby.list?token=veuiyigesirfdechku", "behavior": "classical"},
+    {"name": "emby", "path": "rules/emby.list", "behavior": "classical"},
     {"name": "NBA", "path": "rules/NBA.list", "behavior": "classical"},
     {"name": "kreject", "path": "rules/kreject.list", "behavior": "classical"},
     {"name": "ProxyLite.list", "path": "rules/ProxyLite.list", "behavior": "classical"},

@@ -40,9 +40,16 @@ class ConverterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sample.list:2: unsupported rule type 'GEOIP'"):
             self.run_source("sample.list", "DOMAIN,example.com\nGEOIP,CN\n", "classical")
 
-    def test_policy_suffix_fails(self):
-        with self.assertRaisesRegex(ValueError, "without policy or no-resolve"):
-            self.run_source("sample.list", "IP-CIDR,192.0.2.0/24,no-resolve\n", "classical")
+    def test_ip_no_resolve_suffix_is_removed(self):
+        result = self.run_source("sample.list", "IP-CIDR,192.0.2.0/24,no-resolve\nIP-CIDR6,2001:db8::/32,NO-RESOLVE\n", "classical")
+        self.assertEqual(result["rules"], [
+            {"ip_cidr": ["192.0.2.0/24"]},
+            {"ip_cidr": ["2001:db8::/32"]},
+        ])
+
+    def test_policy_suffix_still_fails(self):
+        with self.assertRaisesRegex(ValueError, "without policy"):
+            self.run_source("sample.list", "IP-CIDR,192.0.2.0/24,DIRECT\n", "classical")
 
     def test_source_cannot_escape_rules_directory(self):
         (self.root / "outside.list").write_text("DOMAIN,example.com\n", encoding="utf-8")

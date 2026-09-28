@@ -1,5 +1,6 @@
 {
   "sources": [
-    {"name": "NBA", "path": "rules/NBA.list", "behavior": "classical"}
+    {"name": "NBA", "path": "rules/NBA.list", "behavior": "classical"},
+    {"name": "kreject", "path": "rules/kreject.list", "behavior": "classical"}
   ]
 }

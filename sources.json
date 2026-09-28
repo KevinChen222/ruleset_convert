@@ -1,3 +1,5 @@
 {
-  "sources": []
+  "sources": [
+    {"name": "NBA", "path": "rules/NBA.list", "behavior": "classical"}
+  ]
 }

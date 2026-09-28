@@ -11,7 +11,21 @@
 ```json
 {
   "sources": [
-    {"name": "my-sites", "path": "rules/my-sites.list", "behavior": "classical"}
+    {
+      "name": "my-proxy",
+      "path": "rules/my-proxy.list",
+      "behavior": "classical"
+    },
+    {
+      "name": "my-domains",
+      "path": "rules/my-domains.yaml",
+      "behavior": "domain"
+    },
+    {
+      "name": "my-ips",
+      "path": "rules/my-ips.list",
+      "behavior": "ipcidr"
+    }
   ]
 }
 ```

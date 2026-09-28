@@ -1,7 +1,9 @@
 import json
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.convert import convert
 
@@ -50,6 +52,31 @@ class ConverterTests(unittest.TestCase):
     def test_policy_suffix_still_fails(self):
         with self.assertRaisesRegex(ValueError, "without policy"):
             self.run_source("sample.list", "IP-CIDR,192.0.2.0/24,DIRECT\n", "classical")
+
+    def test_github_file_url_downloads_and_converts(self):
+        url = "https://github.com/other/rules/blob/main/deny.list"
+        manifest = self.root / "sources.json"
+        manifest.write_text(json.dumps({"sources": [{"name": "deny", "url": url, "behavior": "classical"}]}), encoding="utf-8")
+        with patch("scripts.convert.urlopen", return_value=BytesIO(b"IP-CIDR,192.0.2.1/24,no-resolve\n")) as download:
+            convert(manifest, self.root / "dist")
+        download.assert_called_once_with("https://github.com/other/rules/raw/main/deny.list", timeout=20)
+        result = json.loads((self.root / "dist" / "deny.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["rules"], [{"ip_cidr": ["192.0.2.0/24"]}])
+
+    def test_github_raw_yaml_url(self):
+        url = "https://raw.githubusercontent.com/other/rules/main/domains.yaml"
+        manifest = self.root / "sources.json"
+        manifest.write_text(json.dumps({"sources": [{"name": "domains", "url": url, "behavior": "domain"}]}), encoding="utf-8")
+        with patch("scripts.convert.urlopen", return_value=BytesIO(b"payload:\n  - '+.example.com'\n")):
+            convert(manifest, self.root / "dist")
+        result = json.loads((self.root / "dist" / "domains.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["rules"], [{"domain_suffix": ["example.com"]}])
+
+    def test_non_github_url_is_rejected(self):
+        manifest = self.root / "sources.json"
+        manifest.write_text(json.dumps({"sources": [{"name": "other", "url": "https://example.com/rules.list", "behavior": "classical"}]}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "GitHub HTTPS file URL"):
+            convert(manifest, self.root / "dist")
 
     def test_source_cannot_escape_rules_directory(self):
         (self.root / "outside.list").write_text("DOMAIN,example.com\n", encoding="utf-8")

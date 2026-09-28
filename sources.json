@@ -1,6 +1,8 @@
 {
   "sources": [
     {"name": "NBA", "path": "rules/NBA.list", "behavior": "classical"},
-    {"name": "kreject", "path": "rules/kreject.list", "behavior": "classical"}
+    {"name": "kreject", "path": "rules/kreject.list", "behavior": "classical"},
+    {"name": "ProxyLite.list", "path": "rules/ProxyLite.list", "behavior": "classical"},
+    {"name": "DirectKevin.list", "path": "rules/DirectKevin.list", "behavior": "classical"}
   ]
 }

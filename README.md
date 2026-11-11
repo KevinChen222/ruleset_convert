@@ -59,3 +59,7 @@ Release 地址固定：`https://github.com/KevinChen222/ruleset_convert/releases
 把这个对象加入 sing-box 配置的 `route.rule_set`，再在需要的 `route.rules` 中引用它，例如 `{"rule_set": "my-sites", "action": "route", "outbound": "proxy"}`。源格式可把 URL 后缀改为 `.json`，同时把 `format` 改为 `source`。输出使用 sing-box 规则集版本 2，适用于 sing-box 1.10.0 及更新版本；二进制由官方 sing-box 1.14.2 编译。已有仓库提供的现成 sing-box 规则集可以直接引用，无需放进这里重新构建。
 
 本地检查：`python -m pip install -r requirements.txt`，然后运行 `python -m unittest discover -s tests` 和 `python scripts/convert.py`。
+
+## 自定义上游 MRS
+
+在 `mrs-sources.json` 配置上游规则，可合并多个 URL 并转换为 Mihomo 的 `.mrs` 文件，产物保存在仓库的 `mrs/` 目录，每 25 小时更新一次。配置方式和 Mihomo 引用示例见 [自定义上游 MRS](mrs_converter/README.md)。

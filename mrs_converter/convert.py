@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download rule providers and compile domain and IP CIDR MRS files."""
+"""Download rule providers into domain/IP MRS and classical YAML files."""
 
 import argparse
 import ipaddress
@@ -19,6 +19,7 @@ import yaml
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 INTERVAL = timedelta(hours=25)
 STATE_FILE = ".last-success"
+CLASSICAL_TYPES = {"DOMAIN-KEYWORD", "DOMAIN-REGEX", "IP-ASN", "PROCESS-NAME", "PROCESS-PATH"}
 
 
 def is_due(output_dir, now=None):
@@ -83,10 +84,11 @@ def normalize_rule(line, behavior):
         return "ipcidr", str(ipaddress.ip_network(line, strict=False))
     parts = [part.strip() for part in line.split(",")]
     kind = parts[0].upper()
-    if len(parts) == 3 and kind in {"IP-CIDR", "IP-CIDR6"} and parts[2].lower() == "no-resolve":
+    no_resolve = len(parts) == 3 and kind in {"IP-CIDR", "IP-CIDR6", "IP-ASN"} and parts[2].lower() == "no-resolve"
+    if no_resolve:
         parts.pop()
     if len(parts) != 2 or not all(parts):
-        raise ValueError("expected TYPE,value; only IP-CIDR/IP-CIDR6 may add no-resolve")
+        raise ValueError("expected TYPE,value; only IP-CIDR/IP-CIDR6/IP-ASN may add no-resolve")
     value = parts[1]
     if kind in {"DOMAIN", "DOMAIN-SUFFIX"}:
         value = domain_value(value)
@@ -96,7 +98,11 @@ def normalize_rule(line, behavior):
         if kind == "IP-CIDR6" and network.version != 6:
             raise ValueError("IP-CIDR6 requires IPv6")
         return "ipcidr", str(network)
-    raise ValueError(f"rule type {kind!r} cannot be represented in MRS")
+    if kind in CLASSICAL_TYPES:
+        if kind == "IP-ASN" and (not value.isdecimal() or not 1 <= int(value) <= 4294967295):
+            raise ValueError("IP-ASN requires a number between 1 and 4294967295")
+        return "classical", f"{kind},{value}" + (",no-resolve" if no_resolve else "")
+    raise ValueError(f"unsupported rule type {kind!r}")
 
 
 def load_sources(manifest):
@@ -120,12 +126,15 @@ def load_sources(manifest):
     return sources
 
 
-def convert(manifest, output_dir, mihomo="mihomo", now=None):
+def convert(manifest, output_dir, mihomo="mihomo", now=None, classical_dir=None):
     sources = load_sources(manifest)
+    classical_dir = classical_dir if classical_dir is not None else output_dir.parent / "classical"
     with tempfile.TemporaryDirectory(prefix="mrs-convert-") as temporary:
         staging = Path(temporary)
+        staged_mrs = staging / "mrs"
+        staged_classical = staging / "classical"
         for name, behavior, urls in sources:
-            groups = {"domain": set(), "ipcidr": set()}
+            groups = {"domain": set(), "ipcidr": set(), "classical": set()}
             for url in urls:
                 count = 0
                 for location, line in read_rules(url):
@@ -140,21 +149,35 @@ def convert(manifest, output_dir, mihomo="mihomo", now=None):
             for kind, values in groups.items():
                 if not values:
                     continue
+                if kind == "classical":
+                    staged_classical.mkdir(exist_ok=True)
+                    target = staged_classical / f"{name}_classical.yaml"
+                    target.write_text(yaml.safe_dump({"payload": sorted(values)}, allow_unicode=True, sort_keys=False), encoding="utf-8")
+                    print(f"classical/{target.name}: {len(values)} rules from {len(urls)} source(s)")
+                    continue
+                category = "domain" if kind == "domain" else "ip"
                 source = staging / f"{name}.{kind}.txt"
-                target = staging / f"{name}.{kind}.mrs"
+                target = staged_mrs / category / f"{name}_{category}.mrs"
+                target.parent.mkdir(parents=True, exist_ok=True)
                 source.write_text("\n".join(sorted(values)) + "\n", encoding="utf-8")
                 subprocess.run([str(mihomo), "convert-ruleset", kind, "text", str(source), str(target)], check=True)
                 if not target.is_file() or target.stat().st_size == 0:
                     raise ValueError(f"{target.name}: compiler produced no MRS file")
-                print(f"{target.name}: {len(values)} rules from {len(urls)} source(s)")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        targets = list(staging.glob("*.mrs"))
-        for target in targets:
-            (output_dir / target.name).write_bytes(target.read_bytes())
-        expected = {target.name for target in targets}
-        for target in output_dir.glob("*.mrs"):
-            if target.name not in expected:
-                target.unlink()
+                print(f"mrs/{category}/{target.name}: {len(values)} rules from {len(urls)} source(s)")
+        for staged_dir, destination, pattern in (
+            (staged_mrs, output_dir, "*.mrs"),
+            (staged_classical, classical_dir, "*_classical.yaml"),
+        ):
+            destination.mkdir(parents=True, exist_ok=True)
+            targets = list(staged_dir.rglob(pattern))
+            expected = {target.relative_to(staged_dir) for target in targets}
+            for target in targets:
+                published = destination / target.relative_to(staged_dir)
+                published.parent.mkdir(parents=True, exist_ok=True)
+                published.write_bytes(target.read_bytes())
+            for target in destination.rglob(pattern):
+                if target.relative_to(destination) not in expected:
+                    target.unlink()
         updated_at = now or datetime.now(timezone.utc)
         (output_dir / STATE_FILE).write_text(updated_at.isoformat() + "\n", encoding="utf-8")
 
@@ -163,6 +186,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=Path("mrs-sources.json"))
     parser.add_argument("--output-dir", type=Path, default=Path("mrs"))
+    parser.add_argument("--classical-dir", type=Path)
     parser.add_argument("--mihomo", default="mihomo")
     parser.add_argument("--check-due", action="store_true")
     args = parser.parse_args()
@@ -170,7 +194,7 @@ def main():
         if args.check_due:
             print("true" if is_due(args.output_dir) else "false")
         else:
-            convert(args.manifest, args.output_dir, args.mihomo)
+            convert(args.manifest, args.output_dir, args.mihomo, classical_dir=args.classical_dir)
     except (OSError, ValueError, yaml.YAMLError, subprocess.CalledProcessError) as error:
         print(error, file=sys.stderr)
         return 1

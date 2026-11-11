@@ -1,6 +1,22 @@
 # 自定义上游 MRS
 
-在仓库根目录的 `mrs-sources.json` 登记上游规则，GitHub Actions 会下载并转换为 Mihomo 可用的 `.mrs`，写入 `main` 分支的 `mrs/` 目录。
+在仓库根目录的 `mrs-sources.json` 登记上游规则，GitHub Actions 会下载并转换为 Mihomo 可用的规则文件，写入 `main` 分支。域名和 IP 分别保存在 `mrs/domain/`、`mrs/ip/`，关键词、ASN 和进程等规则保存在 `classical/` 的补充 YAML 文件中。
+
+## 规则来源
+
+| 名称 | 上游 | 产物类型 |
+| --- | --- | --- |
+| OpenAI | blackmatrix7 的 OpenAI_No_Resolve | domain、ip、classical |
+| Claude | blackmatrix7 的 Claude_No_Resolve | domain |
+| Gemini | blackmatrix7 的 Gemini_No_Resolve、BardAI_No_Resolve | domain、classical |
+| AWAvenue-Ads-Rule | TG-Twilight 的 AWAvenue-Ads-Rule-Clash | domain |
+| Telegram | blackmatrix7 的 Telegram_No_Resolve | domain、ip、classical |
+| GoogleFCM | blackmatrix7 的 GoogleFCM_No_Resolve | domain、ip |
+| ChatGPTVoice | KevinChen222/rule- 的 ChatGPTVoice.list | ip |
+| Alibaba | blackmatrix7 的 Alibaba_Classical_No_Resolve | domain、ip、classical |
+| BiliBili | blackmatrix7 的 BiliBili_No_Resolve | domain、ip、classical |
+
+完整上游 URL 见 `mrs-sources.json`。产物类型按上游实际内容生成；Claude、Gemini 的上述上游没有 IP-CIDR 规则，因此没有对应的 IP MRS。Gemini 的 `classical` 补充文件包含域名关键词规则。
 
 ## 配置上游
 
@@ -32,15 +48,17 @@
 
 | behavior | 上游内容 | 产物 |
 | --- | --- | --- |
-| `domain` | `example.com`、`+.example.com`、`.example.com`、`*.example.com` 等域名规则 | `<name>.domain.mrs` |
-| `ipcidr` | IPv4 / IPv6 CIDR | `<name>.ipcidr.mrs` |
-| `classical` | `DOMAIN`、`DOMAIN-SUFFIX`、`IP-CIDR`、`IP-CIDR6` | 按内容生成 `<name>.domain.mrs`、`<name>.ipcidr.mrs` |
+| `domain` | `example.com`、`+.example.com`、`.example.com`、`*.example.com` 等域名规则 | `mrs/domain/<name>_domain.mrs` |
+| `ipcidr` | IPv4 / IPv6 CIDR | `mrs/ip/<name>_ip.mrs` |
+| `classical` | `DOMAIN`、`DOMAIN-SUFFIX`、`IP-CIDR`、`IP-CIDR6` 及下述补充类型 | 按内容分别生成域名 MRS、IP MRS、classical YAML |
 
-一个 `classical` 上游同时包含域名和 IP 时，会生成两份 MRS，需要在 Mihomo 中分别引用。没有对应规则的类型不生成文件。Claude 示例生成 `mrs/Claude.domain.mrs`。
+一个 `classical` 上游同时包含域名和 IP 时，会生成两份 MRS，需要在 Mihomo 中分别引用。没有对应规则的类型不生成文件。Claude 示例生成 `mrs/domain/Claude_domain.mrs`，BiliBili 生成 `mrs/domain/BiliBili_domain.mrs`、`mrs/ip/BiliBili_ip.mrs` 和 `classical/BiliBili_classical.yaml`。
 
-MRS 仅支持 `domain` 和 `ipcidr`，无法保存 `DOMAIN-KEYWORD`、`DOMAIN-REGEX`、进程、端口、策略字段等规则。遇到这些规则、无效输入或下载失败时，工作流会报错，仓库保留上次成功生成的文件。`IP-CIDR` / `IP-CIDR6` 后的 `no-resolve` 不写入 MRS；需要时在 Mihomo 的 `RULE-SET` 引用处添加 `no-resolve`。
+MRS 仅支持 `domain` 和 `ipcidr`。`DOMAIN-KEYWORD`、`DOMAIN-REGEX`、`IP-ASN`、`PROCESS-NAME`、`PROCESS-PATH` 会保留在 `classical/<name>_classical.yaml` 中，需要一并引用才能覆盖这些上游规则。`IP-ASN` 的 `no-resolve` 保留在补充 YAML 中。未知类型、策略字段、无效输入或下载失败会使工作流报错，仓库保留上次成功生成的文件。
 
-`mrs/` 中的 `.mrs` 文件由配置统一管理；移除配置条目或某类规则后，对应的产物会在成功转换时清理。其他文件应保存在该目录之外。
+`IP-CIDR` / `IP-CIDR6` 后的 `no-resolve` 不写入 MRS；使用 No_Resolve 上游时，在对应 IP MRS 的 `RULE-SET` 引用处添加 `no-resolve`。
+
+`mrs/` 中的 `.mrs` 和 `classical/` 中的 `*_classical.yaml` 由配置统一管理；移除配置条目或某类规则后，对应的产物会在成功转换时清理。其他规则文件应保存在这两个目录之外。
 
 ## 更新方式
 
@@ -48,25 +66,41 @@ Actions 每小时检查一次。距离 `mrs/.last-success` 记录的上次成功
 
 向 `main` 推送配置、转换器或其工作流的修改后会立即转换。也可以点击 **Actions → Convert custom MRS → Run workflow**，选择 `main` 手动更新；这两种触发方式不受 25 小时间隔限制。
 
-工作流使用 GitHub 自动提供的 `GITHUB_TOKEN` 提交 `mrs/` 目录。分支保护规则需要允许该工作流提交。
+工作流使用 GitHub 自动提供的 `GITHUB_TOKEN` 提交 `mrs/` 和 `classical/` 目录。分支保护规则需要允许该工作流提交。
 
 ## 在 Mihomo 中使用
 
 ```yaml
 rule-providers:
-  Claude:
+  BiliBili_domain:
     type: http
     behavior: domain
     format: mrs
-    url: https://raw.githubusercontent.com/KevinChen222/ruleset_convert/main/mrs/Claude.domain.mrs
-    path: ./ruleset/Claude.domain.mrs
+    url: https://raw.githubusercontent.com/KevinChen222/ruleset_convert/main/mrs/domain/BiliBili_domain.mrs
+    path: ./ruleset/BiliBili_domain.mrs
+    interval: 90000
+  BiliBili_ip:
+    type: http
+    behavior: ipcidr
+    format: mrs
+    url: https://raw.githubusercontent.com/KevinChen222/ruleset_convert/main/mrs/ip/BiliBili_ip.mrs
+    path: ./ruleset/BiliBili_ip.mrs
+    interval: 90000
+  BiliBili_classical:
+    type: http
+    behavior: classical
+    format: yaml
+    url: https://raw.githubusercontent.com/KevinChen222/ruleset_convert/main/classical/BiliBili_classical.yaml
+    path: ./ruleset/BiliBili_classical.yaml
     interval: 90000
 
 rules:
-  - RULE-SET,Claude,PROXY
+  - RULE-SET,BiliBili_domain,PROXY
+  - RULE-SET,BiliBili_ip,PROXY,no-resolve
+  - RULE-SET,BiliBili_classical,PROXY
 ```
 
-将 `PROXY` 换成配置中的代理组名称。IP 产物使用 `behavior: ipcidr` 和对应的 `.ipcidr.mrs` 地址。`interval: 90000` 是客户端每 25 小时拉取一次，与仓库自动转换分别计时。
+将 `PROXY` 换成配置中的代理组名称。其他规则按相同的目录与命名方式引用；只有 IP 产物的 ChatGPTVoice 使用 `behavior: ipcidr`。其语音媒体流量需要代理节点支持 UDP。`interval: 90000` 是客户端每 25 小时拉取一次，与仓库自动转换分别计时。
 
 ## 本地运行
 
@@ -77,4 +111,4 @@ python3 mrs_converter/convert.py --mihomo /path/to/mihomo
 python3 mrs_converter/convert.py --check-due
 ```
 
-`--manifest` 可指定配置文件，`--output-dir` 可指定产物目录。转换使用官方 Mihomo 的 `convert-ruleset` 命令。
+`--manifest` 可指定配置文件，`--output-dir` 可指定 MRS 目录，`--classical-dir` 可指定补充 YAML 目录，默认是 MRS 目录同级的 `classical/`。转换使用官方 Mihomo 的 `convert-ruleset` 命令。

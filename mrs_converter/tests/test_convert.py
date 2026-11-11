@@ -7,6 +7,8 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 from mrs_converter.convert import STATE_FILE, convert, is_due, load_sources, normalize_rule
 
 
@@ -52,7 +54,7 @@ class MrsConverterTests(unittest.TestCase):
             "  - DOMAIN-SUFFIX,anthropic.com\n"
             "  - DOMAIN-SUFFIX,claude.ai\n"
         )})
-        self.assertEqual(self.compiled, {"Claude.domain.mrs": (
+        self.assertEqual(self.compiled, {"Claude_domain.mrs": (
             "domain", "+.anthropic.com\n+.claude.ai\ncdn.usefathom.com\n"
         )})
         self.assertEqual((self.output / STATE_FILE).read_text().strip(), self.now.isoformat())
@@ -67,25 +69,47 @@ class MrsConverterTests(unittest.TestCase):
             "https://example.com/b.yaml": "payload:\n  - DOMAIN,example.com\n  - IP-CIDR6,2001:db8::/32\n",
             "https://example.com/domain.txt": "+.example.org\n*.example.net\n",
         })
-        self.assertEqual(self.compiled["Mixed.domain.mrs"], ("domain", "example.com\n"))
-        self.assertEqual(self.compiled["Mixed.ipcidr.mrs"], ("ipcidr", "192.0.2.0/24\n2001:db8::/32\n"))
-        self.assertEqual(self.compiled["Other.domain.mrs"], ("domain", "*.example.net\n+.example.org\n"))
+        self.assertEqual(self.compiled["Mixed_domain.mrs"], ("domain", "example.com\n"))
+        self.assertEqual(self.compiled["Mixed_ip.mrs"], ("ipcidr", "192.0.2.0/24\n2001:db8::/32\n"))
+        self.assertEqual(self.compiled["Other_domain.mrs"], ("domain", "*.example.net\n+.example.org\n"))
+        self.assertEqual({p.relative_to(self.output).as_posix() for p in self.output.rglob("*.mrs")}, {
+            "domain/Mixed_domain.mrs", "ip/Mixed_ip.mrs", "domain/Other_domain.mrs",
+        })
+
+    def test_classical_supplement_preserves_keywords_asn_and_process_rules(self):
+        self.configure([self.source(urls=["https://example.com/mixed.txt"])])
+        supplemental = ["DOMAIN-KEYWORD,openai", "IP-ASN,20473,no-resolve", "PROCESS-NAME,Telegram.exe"]
+        self.run_conversion({"https://example.com/mixed.txt": "DOMAIN,example.com\n" + "\n".join(supplemental)})
+        target = self.root / "classical" / "Claude_classical.yaml"
+        self.assertEqual(yaml.safe_load(target.read_text())["payload"], supplemental)
+        self.assertEqual(set(self.compiled), {"Claude_domain.mrs"})
+
+    def test_classical_only_source_does_not_create_empty_mrs(self):
+        self.configure([self.source(urls=["https://example.com/keyword.txt"])])
+        self.run_conversion({"https://example.com/keyword.txt": "DOMAIN-KEYWORD,example\n"})
+        self.assertFalse(self.compiled)
+        self.assertTrue((self.root / "classical" / "Claude_classical.yaml").is_file())
+        self.assertTrue((self.output / STATE_FILE).is_file())
 
     def test_failure_in_later_source_preserves_all_published_files_and_timestamp(self):
-        self.output.mkdir()
-        (self.output / "Claude.domain.mrs").write_bytes(b"previous")
+        (self.output / "domain").mkdir(parents=True)
+        (self.output / "domain" / "Claude_domain.mrs").write_bytes(b"previous")
         (self.output / STATE_FILE).write_text(self.now.isoformat())
+        supplemental = self.root / "classical" / "Claude_classical.yaml"
+        supplemental.parent.mkdir()
+        supplemental.write_text("payload: ['DOMAIN-KEYWORD,previous']")
         self.configure([
             self.source(urls=["https://example.com/a.txt"]),
             self.source("Unsupported", ["https://example.com/b.txt"]),
         ])
-        with self.assertRaisesRegex(ValueError, "b.txt:1:.*cannot be represented"):
+        with self.assertRaisesRegex(ValueError, "b.txt:1:.*unsupported rule type"):
             self.run_conversion({
                 "https://example.com/a.txt": "DOMAIN,new.example.com\n",
-                "https://example.com/b.txt": "DOMAIN-KEYWORD,example\n",
+                "https://example.com/b.txt": "UNKNOWN,example\n",
             })
-        self.assertEqual((self.output / "Claude.domain.mrs").read_bytes(), b"previous")
+        self.assertEqual((self.output / "domain" / "Claude_domain.mrs").read_bytes(), b"previous")
         self.assertEqual((self.output / STATE_FILE).read_text(), self.now.isoformat())
+        self.assertEqual(supplemental.read_text(), "payload: ['DOMAIN-KEYWORD,previous']")
 
     def test_download_failure_does_not_publish(self):
         self.configure([self.source()])
@@ -115,10 +139,19 @@ class MrsConverterTests(unittest.TestCase):
     def test_success_cleans_stale_mrs_and_preserves_other_files(self):
         self.output.mkdir()
         (self.output / "Old.domain.mrs").write_bytes(b"old")
+        (self.output / "ip").mkdir()
+        (self.output / "ip" / "Old_ip.mrs").write_bytes(b"old")
+        supplemental = self.root / "classical" / "Old_classical.yaml"
+        supplemental.parent.mkdir()
+        supplemental.write_text("payload: ['DOMAIN-KEYWORD,old']")
+        (supplemental.parent / "notes.txt").write_text("notes")
         (self.output / "notes.txt").write_text("notes")
         self.configure([self.source()])
         self.run_conversion({"https://example.com/rules.yaml": "payload: ['DOMAIN,example.com']"})
         self.assertFalse((self.output / "Old.domain.mrs").exists())
+        self.assertFalse((self.output / "ip" / "Old_ip.mrs").exists())
+        self.assertFalse(supplemental.exists())
+        self.assertEqual((supplemental.parent / "notes.txt").read_text(), "notes")
         self.assertEqual((self.output / "notes.txt").read_text(), "notes")
 
     def test_empty_or_invalid_yaml_source_does_not_publish(self):
@@ -149,11 +182,11 @@ class MrsConverterTests(unittest.TestCase):
     def test_github_page_is_downloaded_as_raw_yaml(self):
         self.configure([self.source(urls=["https://github.com/owner/repo/blob/main/domains.yaml"])])
         self.run_conversion({"https://raw.githubusercontent.com/owner/repo/main/domains.yaml": "payload: ['DOMAIN,example.com']"})
-        self.assertIn("Claude.domain.mrs", self.compiled)
+        self.assertIn("Claude_domain.mrs", self.compiled)
 
     def test_unsupported_rules_policies_and_invalid_values_are_rejected(self):
         for line in (
-            "DOMAIN-REGEX,.*example.com", "PROCESS-NAME,app", "DST-PORT,443", "GEOIP,CN",
+            "UNKNOWN,example", "DST-PORT,443", "GEOIP,CN", "IP-ASN,invalid", "IP-ASN,4294967296",
             "DOMAIN,example.com,DIRECT", "IP-CIDR,192.0.2.0/24,PROXY",
             "DOMAIN,*.example.com", "DOMAIN-SUFFIX,+.example.com", "DOMAIN,https://example.com",
             "DOMAIN,example..com", "IP-CIDR6,192.0.2.0/24", "IP-CIDR,invalid",

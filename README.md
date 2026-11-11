@@ -62,4 +62,4 @@ Release 地址固定：`https://github.com/KevinChen222/ruleset_convert/releases
 
 ## 自定义上游 MRS
 
-在 `mrs-sources.json` 配置上游规则，可合并多个 URL 并转换为 Mihomo 的 `.mrs` 文件，产物保存在仓库的 `mrs/` 目录，每 25 小时更新一次。配置方式和 Mihomo 引用示例见 [自定义上游 MRS](mrs_converter/README.md)。
+在 `mrs-sources.json` 配置上游规则，可合并多个 URL，域名和 IP 规则分别生成 `mrs/domain/<name>_domain.mrs`、`mrs/ip/<name>_ip.mrs`，关键词、ASN 和进程等规则保存在 `classical/<name>_classical.yaml`，每 25 小时更新一次。配置方式和 Mihomo 引用示例见 [自定义上游 MRS](mrs_converter/README.md)。

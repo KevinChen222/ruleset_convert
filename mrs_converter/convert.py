@@ -126,12 +126,46 @@ def load_sources(manifest):
     return sources
 
 
-def convert(manifest, output_dir, mihomo="mihomo", now=None, classical_dir=None):
+def singbox_ruleset(kind, values):
+    if kind == "ipcidr":
+        return {"version": 2, "rules": [{"ip_cidr": sorted(values)}]}
+    domains, suffixes, regexes = [], [], []
+    for value in sorted(values):
+        if value.startswith("+."):
+            bare = value[2:]
+            if "*" in bare:
+                labels = "\\.".join("[^.]+" if label == "*" else re.escape(label) for label in bare.split("."))
+                regexes.append(rf"^(?:.+\.)?{labels}$")
+            else:
+                suffixes.append(bare)
+        elif value.startswith("."):
+            bare = value[1:]
+            labels = "\\.".join("[^.]+" if label == "*" else re.escape(label) for label in bare.split("."))
+            regexes.append(rf"^.+\.{labels}$")
+        elif "*" in value:
+            labels = "\\.".join("[^.]+" if label == "*" else re.escape(label) for label in value.split("."))
+            regexes.append(rf"^{labels}$")
+        else:
+            domains.append(value)
+    rule = {}
+    if domains:
+        rule["domain"] = sorted(set(domains))
+    if suffixes:
+        rule["domain_suffix"] = sorted(set(suffixes))
+    if regexes:
+        rule["domain_regex"] = sorted(set(regexes))
+    return {"version": 2, "rules": [rule]}
+
+
+def convert(manifest, output_dir, mihomo="mihomo", now=None, classical_dir=None, sing_box=None, srs_dir=None):
     sources = load_sources(manifest)
     classical_dir = classical_dir if classical_dir is not None else output_dir.parent / "classical"
+    if sing_box is not None:
+        srs_dir = srs_dir if srs_dir is not None else output_dir.parent / "srs"
     with tempfile.TemporaryDirectory(prefix="mrs-convert-") as temporary:
         staging = Path(temporary)
         staged_mrs = staging / "mrs"
+        staged_srs = staging / "srs"
         staged_classical = staging / "classical"
         for name, behavior, urls in sources:
             groups = {"domain": set(), "ipcidr": set(), "classical": set()}
@@ -164,10 +198,22 @@ def convert(manifest, output_dir, mihomo="mihomo", now=None, classical_dir=None)
                 if not target.is_file() or target.stat().st_size == 0:
                     raise ValueError(f"{target.name}: compiler produced no MRS file")
                 print(f"mrs/{category}/{target.name}: {len(values)} rules from {len(urls)} source(s)")
-        for staged_dir, destination, pattern in (
+                if sing_box is not None:
+                    srs_source = staging / f"{name}.{kind}.json"
+                    srs_target = staged_srs / category / f"{name}_{category}.srs"
+                    srs_target.parent.mkdir(parents=True, exist_ok=True)
+                    srs_source.write_text(json.dumps(singbox_ruleset(kind, values), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                    subprocess.run([str(sing_box), "rule-set", "compile", "--output", str(srs_target), str(srs_source)], check=True)
+                    if not srs_target.is_file() or srs_target.stat().st_size == 0:
+                        raise ValueError(f"{srs_target.name}: compiler produced no SRS file")
+                    print(f"srs/{category}/{srs_target.name}: {len(values)} rules from {len(urls)} source(s)")
+        publish_sets = [
             (staged_mrs, output_dir, "*.mrs"),
             (staged_classical, classical_dir, "*_classical.yaml"),
-        ):
+        ]
+        if sing_box is not None:
+            publish_sets.append((staged_srs, srs_dir, "*.srs"))
+        for staged_dir, destination, pattern in publish_sets:
             destination.mkdir(parents=True, exist_ok=True)
             targets = list(staged_dir.rglob(pattern))
             expected = {target.relative_to(staged_dir) for target in targets}
@@ -188,13 +234,22 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=Path("mrs"))
     parser.add_argument("--classical-dir", type=Path)
     parser.add_argument("--mihomo", default="mihomo")
+    parser.add_argument("--sing-box")
+    parser.add_argument("--srs-dir", type=Path)
     parser.add_argument("--check-due", action="store_true")
     args = parser.parse_args()
     try:
         if args.check_due:
             print("true" if is_due(args.output_dir) else "false")
         else:
-            convert(args.manifest, args.output_dir, args.mihomo, classical_dir=args.classical_dir)
+            convert(
+                args.manifest,
+                args.output_dir,
+                args.mihomo,
+                classical_dir=args.classical_dir,
+                sing_box=args.sing_box,
+                srs_dir=args.srs_dir,
+            )
     except (OSError, ValueError, yaml.YAMLError, subprocess.CalledProcessError) as error:
         print(error, file=sys.stderr)
         return 1

@@ -68,20 +68,33 @@ jobs:
           gzip -dc .deps/mihomo.gz > .deps/mihomo
           chmod +x .deps/mihomo
           .deps/mihomo -v
-      - name: Convert upstream rules to MRS
+      - name: Download verified sing-box compiler
         if: steps.interval.outputs.due == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        run: python mrs_converter/convert.py --mihomo .deps/mihomo
-      - name: Commit MRS files
+        shell: bash
+        run: |
+          mkdir -p .deps
+          curl --fail --silent --show-error --location --retry 3 \
+            --output .deps/sing-box.tar.gz \
+            'https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-linux-amd64.tar.gz'
+          echo 'a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6  .deps/sing-box.tar.gz' | sha256sum --check
+          tar -xzf .deps/sing-box.tar.gz -C .deps
+          mv .deps/sing-box-1.14.2-linux-amd64/sing-box .deps/sing-box
+          chmod +x .deps/sing-box
+          .deps/sing-box version
+      - name: Convert upstream rules to MRS and SRS
+        if: steps.interval.outputs.due == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: python mrs_converter/convert.py --mihomo .deps/mihomo --sing-box .deps/sing-box --srs-dir srs
+      - name: Commit MRS and SRS files
         if: steps.interval.outputs.due == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- mrs/ classical/
+          git add -- mrs/ srs/ classical/
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m 'Update custom MRS rule sets'
+          git commit -m 'Update custom MRS and SRS rule sets'
           for attempt in 1 2 3; do
             git fetch origin main
             git rebase origin/main

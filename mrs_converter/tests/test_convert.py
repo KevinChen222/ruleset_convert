@@ -216,6 +216,57 @@ class MrsConverterTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     is_due(self.output, self.now)
 
+    def test_singbox_srs_compilation_and_cleanup(self):
+        srs_dir = self.root / "srs"
+        (srs_dir / "ip").mkdir(parents=True)
+        (srs_dir / "ip" / "Stale_ip.srs").write_bytes(b"stale")
+        compiled_srs = {}
+
+        def both_compilers(command, check):
+            self.assertTrue(check)
+            if command[0] == "mihomo":
+                return self.compiler(command, check)
+            self.assertEqual(command[:4], ["sing-box", "rule-set", "compile", "--output"])
+            compiled_srs[Path(command[4]).name] = json.loads(Path(command[5]).read_text(encoding="utf-8"))
+            Path(command[4]).write_bytes(b"SRS-test-data")
+
+        self.configure([
+            self.source("Mixed", ["https://example.com/a.txt"]),
+            self.source("Wildcard", ["https://example.com/w.txt"], "domain"),
+        ])
+        downloads = {
+            "https://example.com/a.txt": "DOMAIN,api.example.com\nDOMAIN-SUFFIX,example.com\nIP-CIDR,192.0.2.7/24,no-resolve\n",
+            "https://example.com/w.txt": "+.a.com\n.b.com\n*.c.com\n+.sub.*.d.com\n",
+        }
+        with patch("mrs_converter.convert.urlopen", side_effect=lambda url, timeout: BytesIO(downloads[url].encode("utf-8"))), patch(
+            "mrs_converter.convert.subprocess.run", side_effect=both_compilers
+        ):
+            convert(self.manifest, self.output, now=self.now, sing_box="sing-box", srs_dir=srs_dir)
+
+        self.assertEqual(compiled_srs["Mixed_domain.srs"], {
+            "version": 2,
+            "rules": [{"domain": ["api.example.com"], "domain_suffix": ["example.com"]}],
+        })
+        self.assertEqual(compiled_srs["Mixed_ip.srs"], {
+            "version": 2,
+            "rules": [{"ip_cidr": ["192.0.2.0/24"]}],
+        })
+        self.assertEqual(compiled_srs["Wildcard_domain.srs"], {
+            "version": 2,
+            "rules": [{
+                "domain_suffix": ["a.com"],
+                "domain_regex": [
+                    r"^(?:.+\.)?sub\.[^.]+\.d\.com$",
+                    r"^.+\.b\.com$",
+                    r"^[^.]+\.c\.com$",
+                ],
+            }],
+        })
+        self.assertFalse((srs_dir / "ip" / "Stale_ip.srs").exists())
+        self.assertEqual({p.relative_to(srs_dir).as_posix() for p in srs_dir.rglob("*.srs")}, {
+            "domain/Mixed_domain.srs", "ip/Mixed_ip.srs", "domain/Wildcard_domain.srs",
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,4 +111,4 @@ python3 mrs_converter/convert.py --mihomo /path/to/mihomo
 python3 mrs_converter/convert.py --check-due
 ```
 
-`--manifest` 可指定配置文件，`--output-dir` 可指定 MRS 目录，`--classical-dir` 可指定补充 YAML 目录，默认是 MRS 目录同级的 `classical/`。转换使用官方 Mihomo 的 `convert-ruleset` 命令。
+`--manifest` 可指定配置文件，`--output-dir` 可指定 MRS 目录，`--classical-dir` 可指定补充 YAML 目录，默认是 MRS 目录同级的 `classical/`；传入 `--sing-box /path/to/sing-box` 时同步生成 sing-box 二进制规则集到 `--srs-dir`（默认同级 `srs/domain/<name>_domain.srs` 与 `srs/ip/<name>_ip.srs`）。转换分别使用官方 Mihomo 的 `convert-ruleset` 与 sing-box 的 `rule-set compile` 命令。
